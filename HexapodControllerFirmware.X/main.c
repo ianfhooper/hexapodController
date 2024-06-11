@@ -109,6 +109,7 @@ void InitialiseSlider(U8 slider, U16 x, U16 y, U16 width, U16 colour, S8 value, 
 inline void RenderBorderBox(int lx, int ly, int rx, int ry, U16 Fcolor, U16 colour);
 void RenderButtons();
 void RenderSliders();
+void DrawBattery(int x, int y, int percentage);
 
 // Global variables
 
@@ -129,6 +130,9 @@ U8 controlBits = 0;
 
 uint8_t left_x, left_y, right_x, right_y; // ADCs of joysticks
 int joystick_command_character = 'c'; // For some reason I had to predefine this.. AVR library bug maybe
+
+int controllerSoC = 100;
+int hexapodSoC = 100;
 
 inline bool ButtonTouched(Button* button)
 {
@@ -181,24 +185,24 @@ int main(void)
 {
 	SetupPorts();
 
-    InitialiseButton(WALK_MODE, 140, 25, 100, BLUE, "Walk", true);
-    InitialiseButton(WIGGLE_MODE, 260, 25, 100, BLUE, "Wiggle", false);
+    InitialiseButton(WALK_MODE, 140, 30, 100, BLUE, "Walk", true);
+    InitialiseButton(WIGGLE_MODE, 260, 30, 100, BLUE, "Wiggle", false);
     
-    InitialiseButton(TRIPOD_GAIT, 140, 60, 100, BLUE, "Tripod", true);
-    InitialiseButton(RIPPLE_GAIT, 260, 60, 100, BLUE, "Ripple", false);
+    InitialiseButton(TRIPOD_GAIT, 140, 65, 100, BLUE, "Tripod", true);
+    InitialiseButton(RIPPLE_GAIT, 260, 65, 100, BLUE, "Ripple", false);
     
-    InitialiseButton(LOW_BODY, 140, 95, 100, BLUE, "Low", true);
-    InitialiseButton(HIGH_BODY, 260, 95, 100, BLUE, "High", false);
+    InitialiseButton(LOW_BODY, 140, 100, 100, BLUE, "Low", true);
+    InitialiseButton(HIGH_BODY, 260, 100, 100, BLUE, "High", false);
     
-    InitialiseButton(LOW_STEP, 140, 130, 100, BLUE, "Low", true);
-    InitialiseButton(HIGH_STEP, 260, 130, 100, BLUE, "High", false);
+    InitialiseButton(LOW_STEP, 140, 135, 100, BLUE, "Low", true);
+    InitialiseButton(HIGH_STEP, 260, 135, 100, BLUE, "High", false);
     
-    InitialiseButton(LONG_STEP, 140, 165, 100, BLUE, "Long", true);
-    InitialiseButton(QUICK_STEP, 260, 165, 100, BLUE, "Quick", false);
+    InitialiseButton(LONG_STEP, 140, 170, 100, BLUE, "Long", true);
+    InitialiseButton(QUICK_STEP, 260, 170, 100, BLUE, "Quick", false);
         
-    InitialiseButton(RED_EYES, 122, 200, 64, RED, "Red", false);
-    InitialiseButton(GREEN_EYES, 200, 200, 70, GREEN, "Green", true);
-    InitialiseButton(BLUE_EYES, 278, 200, 64, BLUE, "Blue", false);
+    InitialiseButton(RED_EYES, 122, 205, 64, RED, "Red", false);
+    InitialiseButton(GREEN_EYES, 200, 205, 70, GREEN, "Green", true);
+    InitialiseButton(BLUE_EYES, 278, 205, 64, BLUE, "Blue", false);
    
     
 	_delay_ms(100*16); // Wait for LCD to power up - for some reason delay function not recognising F_CPU
@@ -282,10 +286,22 @@ int main(void)
         }
         buttonPressed = NONE;
         
+        // Check for received bytes
+        if (UCSR1A & (1<<RXC1))
+        {
+            int newHexapodSoC = UDR1;
+            if (newHexapodSoC < hexapodSoC) hexapodSoC = newHexapodSoC; // Expect to always go down, avoids jiggling
+        }
+        
         while (ticks > 781) // 10Hz
 		{
 			ticks -= 781;
            
+            // Batt voltage via 10K:10K divider, 0-1023 ADC for 0-6.6V, works out 650 ADC for 4.2V, 500 ADC for 3.2V
+            int newControllerSoC = (ReadADC(V_BATT)-500)*2/3;
+            if (newControllerSoC < controllerSoC)
+                controllerSoC = newControllerSoC; // Always decreases, avoids jiggling due to sampling noise
+                    
             left_x = ReadADC(LEFT_X)>>2; // Downsample to 8 bit
             left_y = ReadADC(LEFT_Y)>>2;
             right_x = ReadADC(RIGHT_X)>>2;
@@ -325,14 +341,20 @@ void RenderMainPage()
     if (displayNeedsFullRedraw)
     {
         TFT_Fill(BLACK);
-        TFT_CentredText(" Ian's Hexapod ", 160, 2, 1, BLUE, BLACK);
+        TFT_Text("Ian's Hexapod", 2, 3, 1, BLUE, BLACK);
+        TFT_Text("C", 258, 3, 1, L_GRAY, BLACK);
+        TFT_Text("H", 182, 3, 1, L_GRAY, BLACK);
         
-        TFT_Text("Mode:", 2, 31, 1, WHITE, BLACK);
-        TFT_Text("Gait:", 2, 66, 1, WHITE, BLACK);
-        TFT_Text("Body:", 2, 101, 1, WHITE, BLACK);
-        TFT_Text("Step:", 2, 136, 1, WHITE, BLACK);
-        TFT_Text("Eyes:", 2, 206, 1, WHITE, BLACK);        
+        TFT_Text("Mode:", 2, 36, 1, WHITE, BLACK);
+        TFT_Text("Gait:", 2, 71, 1, WHITE, BLACK);
+        TFT_Text("Body:", 2, 106, 1, WHITE, BLACK);
+        TFT_Text("Step:", 2, 141, 1, WHITE, BLACK);
+        TFT_Text("Eyes:", 2, 211, 1, WHITE, BLACK);        
+        TFT_Box(0, 24, 320, 25, L_GRAY);
     }
+    
+    DrawBattery(200, 5, hexapodSoC);
+    DrawBattery(276, 5, controllerSoC);
 }
 
 void HandleTouchDown()
@@ -505,4 +527,25 @@ void RenderSliders()
             slider->oldValue = slider->value;
         }
     }
+}
+
+void DrawBattery(int x, int y, int percentage)
+{
+    if (displayNeedsFullRedraw)
+    {
+        TFT_Box(x, y, x+34, y+12, L_GRAY);
+        TFT_Box(x+34, y+4, x+36, y+8, L_GRAY);
+    }
+    
+    U16 colour = GREEN;
+    if (percentage < 20)
+        colour = RED;
+    else if (percentage < 50)
+        colour = YELLOW;
+    
+    int width = percentage*30/100;
+    if (width<3) width = 3; // Show bit of red even when flat
+    
+    TFT_Box(x+2, y+2, x+2+width, y+10, colour);
+    TFT_Box(x+2+width+1, y+2, x+32, y+10, BLACK);
 }
